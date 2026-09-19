@@ -283,17 +283,30 @@ def verify_install(dest: Path):
 # ---------- PATH handling ----------
 
 def get_windows_user_path():
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command",
-         "[Environment]::GetEnvironmentVariable('PATH','User')"],
-        capture_output=True, text=True, check=True
-    )
-    return result.stdout.strip()
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _ = winreg.QueryValueEx(key, "Path")
+            return value
+    except FileNotFoundError:
+        return ""
 
 
 def set_windows_user_path(new_path):
-    cmd = f"[Environment]::SetEnvironmentVariable('PATH', '{new_path}', 'User')"
-    subprocess.run(["powershell", "-NoProfile", "-Command", cmd], check=True)
+    import winreg
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE
+    ) as key:
+        winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, new_path)
+    # Tell running apps (Explorer, new terminals) that the environment changed
+    try:
+        import ctypes
+        HWND_BROADCAST, WM_SETTINGCHANGE = 0xFFFF, 0x001A
+        ctypes.windll.user32.SendMessageTimeoutW(
+            HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment", 2, 5000, None
+        )
+    except Exception:
+        pass
 
 
 def ensure_on_path_windows(dest: Path):
@@ -419,6 +432,25 @@ def manual_download_install(dest: Path, tag: str, override_url: str = None):
     shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def report_usage(dest: Path):
+    exe = which_hashcat(dest)
+    system = platform.system()
+    if system == "Windows":
+        persisted = any(
+            p.lower().rstrip("\\") == str(dest).lower().rstrip("\\")
+            for p in get_windows_user_path().split(";")
+        )
+        if persisted:
+            log("PATH check: install folder is saved in your user PATH.")
+        else:
+            log("PATH check FAILED: install folder is not in your user PATH.")
+        log("Close ALL terminals/editors and open a new one, then run: hashcat --version")
+        log(f"To use it right now in this window: & \"{exe}\" --version")
+    else:
+        log("Open a new terminal (or run: source your shell rc file), then run: hashcat --version")
+        log(f"To use it right now: {exe} --version")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -448,6 +480,7 @@ def main():
             ensure_on_path_windows(dest)
         else:
             ensure_on_path_unix(dest)
+        report_usage(dest)
         log(f"Installed with install_hashcat.py -> {REPO}")
         return
 
@@ -471,6 +504,7 @@ def main():
         sys.exit(1)
 
     log(f"hashcat installed and verified: {version}")
+    report_usage(dest)
     log(f"Installed with install_hashcat.py -> {REPO}")
 
 
