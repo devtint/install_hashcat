@@ -317,7 +317,9 @@ def ensure_on_path_windows(dest: Path):
         log("Destination already on PATH, skipping.")
         return
     parts.append(dest_str)
-    set_windows_user_path(";".join(parts))
+    new_path = ";".join(parts)
+    set_windows_user_path(new_path)
+    os.environ["PATH"] = os.environ.get("PATH", "") + ";" + dest_str
     log(f"Added {dest_str} to user PATH. Open a NEW terminal for it to take effect.")
 
 
@@ -325,7 +327,8 @@ def ensure_on_path_unix(dest: Path):
     dest_str = str(dest)
     if os.environ.get("PATH", "") and dest_str in os.environ["PATH"].split(":"):
         log("Destination already on PATH for this session.")
-        return
+    else:
+        os.environ["PATH"] = os.environ.get("PATH", "") + ":" + dest_str
 
     shell = os.environ.get("SHELL", "")
     if "zsh" in shell:
@@ -435,19 +438,35 @@ def manual_download_install(dest: Path, tag: str, override_url: str = None):
 def report_usage(dest: Path):
     exe = which_hashcat(dest)
     system = platform.system()
+
+    if exe is None:
+        # Should not normally happen since verify_install already passed,
+        # but search a bit wider so we never leave the user guessing.
+        found = find_hashcat_binary(dest.parent) if dest.parent.exists() else None
+        exe = found or (dest / ("hashcat.exe" if system == "Windows" else "hashcat"))
+        log(f"Could not confirm the exact binary location, best guess: {exe}")
+
     if system == "Windows":
         persisted = any(
-            p.lower().rstrip("\\") == str(dest).lower().rstrip("\\")
-            for p in get_windows_user_path().split(";")
+            part.lower().rstrip("\\") == str(dest).lower().rstrip("\\")
+            for part in get_windows_user_path().split(";") if part
         )
-        if persisted:
+        on_path_now = shutil.which("hashcat") is not None
+        if persisted and on_path_now:
+            log("PATH check: install folder is saved and already usable in this window.")
+        elif persisted:
             log("PATH check: install folder is saved in your user PATH.")
+            log("This terminal window was opened before the install, so it has not picked it up yet.")
         else:
             log("PATH check FAILED: install folder is not in your user PATH.")
         log("Close ALL terminals/editors and open a new one, then run: hashcat --version")
         log(f"To use it right now in this window: & \"{exe}\" --version")
     else:
-        log("Open a new terminal (or run: source your shell rc file), then run: hashcat --version")
+        on_path_now = shutil.which("hashcat") is not None
+        if on_path_now:
+            log("PATH check: hashcat is already usable in this shell.")
+        else:
+            log("Open a new terminal (or run: source your shell rc file), then run: hashcat --version")
         log(f"To use it right now: {exe} --version")
 
 
