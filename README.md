@@ -66,11 +66,13 @@ python install_hashcat.py --no-package-manager
 
 | OS | Default path |
 |---|---|
-| Windows | `%LOCALAPPDATA%\hashcat` |
+| Windows | `C:\Users\<you>\tools\hashcat` |
 | macOS | `~/.local/share/hashcat` |
 | Linux | `~/.local/share/hashcat` |
 
 No admin/root rights are needed for the default install.
+
+On Windows the default is deliberately outside `AppData`. Python installed from the Microsoft Store hides files written to `AppData` in a private sandbox, which makes the install invisible to PowerShell.
 
 ## After install
 
@@ -81,6 +83,18 @@ hashcat --version
 ```
 
 If that prints a version number, you're good to go.
+
+## Troubleshooting
+
+**"hashcat is not recognized" right after installing**
+
+1. Close every terminal and editor completely, then open a new one. PATH changes only apply to newly started programs.
+2. Check the file exists: `Test-Path "$HOME\tools\hashcat\hashcat.exe"`
+3. Run it by full path to confirm it works: `& "$HOME\tools\hashcat\hashcat.exe" --version`
+
+**Using Python from the Microsoft Store**
+
+Check with `python -c "import sys; print(sys.executable)"`. If the path contains `WindowsApps` or `PythonSoftwareFoundation`, the script detects this and installs outside `AppData` automatically. A python.org install avoids the issue entirely.
 
 ## How verification works
 
