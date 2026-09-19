@@ -41,14 +41,22 @@ def log(msg):
     print(f"[install_hashcat] {msg}")
 
 
+def is_store_python():
+    """Microsoft Store Python redirects AppData writes into a hidden sandbox,
+    so files written there are invisible to PowerShell and other programs."""
+    exe = (sys.executable or "").lower()
+    return "windowsapps" in exe or "pythonsoftwarefoundation" in exe
+
+
 def default_dest():
-    """Pick a sane default install directory per OS, no single hardcoded path."""
+    """Pick a sane default install directory per OS, no single hardcoded path.
+
+    On Windows this deliberately avoids AppData, because Microsoft Store
+    Python virtualizes it and the install would be invisible to the shell.
+    """
     system = platform.system()
     if system == "Windows":
-        base = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
-        return Path(base) / "hashcat"
-    if system == "Darwin":
-        return Path.home() / ".local" / "share" / "hashcat"
+        return Path.home() / "tools" / "hashcat"
     return Path.home() / ".local" / "share" / "hashcat"
 
 
@@ -252,20 +260,22 @@ def flatten_into_dest(bin_path: Path, dest: Path):
             shutil.copy2(item, target)
 
 
-def which_hashcat(dest: Path):
-    """Return a path to a working hashcat binary: prefer dest, fall back to PATH."""
+def which_hashcat(dest: Path, allow_path=True):
+    """Return a path to a hashcat binary: prefer dest, optionally fall back to PATH."""
     name = "hashcat.exe" if platform.system() == "Windows" else "hashcat"
     candidate = dest / name
     if candidate.exists():
         return candidate
+    if not allow_path:
+        return None
     on_path = shutil.which("hashcat")
     return Path(on_path) if on_path else None
 
 
-def verify_install(dest: Path):
+def verify_install(dest: Path, allow_path=True):
     """Actually run the binary and confirm it reports a version. This is the
     real check, not just a file-existence check."""
-    exe = which_hashcat(dest)
+    exe = which_hashcat(dest, allow_path=allow_path)
     if not exe:
         return False, None
     try:
@@ -436,37 +446,25 @@ def manual_download_install(dest: Path, tag: str, override_url: str = None):
 
 
 def report_usage(dest: Path):
-    exe = which_hashcat(dest)
+    exe = which_hashcat(dest, allow_path=False) or (
+        dest / ("hashcat.exe" if platform.system() == "Windows" else "hashcat")
+    )
     system = platform.system()
-
-    if exe is None:
-        # Should not normally happen since verify_install already passed,
-        # but search a bit wider so we never leave the user guessing.
-        found = find_hashcat_binary(dest.parent) if dest.parent.exists() else None
-        exe = found or (dest / ("hashcat.exe" if system == "Windows" else "hashcat"))
-        log(f"Could not confirm the exact binary location, best guess: {exe}")
 
     if system == "Windows":
         persisted = any(
             part.lower().rstrip("\\") == str(dest).lower().rstrip("\\")
             for part in get_windows_user_path().split(";") if part
         )
-        on_path_now = shutil.which("hashcat") is not None
-        if persisted and on_path_now:
-            log("PATH check: install folder is saved and already usable in this window.")
-        elif persisted:
+        if persisted:
             log("PATH check: install folder is saved in your user PATH.")
-            log("This terminal window was opened before the install, so it has not picked it up yet.")
         else:
             log("PATH check FAILED: install folder is not in your user PATH.")
         log("Close ALL terminals/editors and open a new one, then run: hashcat --version")
         log(f"To use it right now in this window: & \"{exe}\" --version")
+        log(f"Confirm the file exists with: Test-Path \"{exe}\"")
     else:
-        on_path_now = shutil.which("hashcat") is not None
-        if on_path_now:
-            log("PATH check: hashcat is already usable in this shell.")
-        else:
-            log("Open a new terminal (or run: source your shell rc file), then run: hashcat --version")
+        log("Open a new terminal (or run: source your shell rc file), then run: hashcat --version")
         log(f"To use it right now: {exe} --version")
 
 
@@ -492,7 +490,14 @@ def main():
 
     dest = Path(args.dest) if args.dest else default_dest()
 
-    ok, version = verify_install(dest)
+    if platform.system() == "Windows" and is_store_python():
+        log("Warning: Microsoft Store Python detected. It hides files written to AppData.")
+        log("Installing outside AppData so the install stays visible to PowerShell.")
+        if "appdata" in str(dest).lower():
+            log("Your chosen --dest is inside AppData and may be invisible. Use another folder.")
+            sys.exit(1)
+
+    ok, version = verify_install(dest, allow_path=(platform.system() != "Windows"))
     if ok:
         log(f"hashcat already installed and verified: {version}")
         if platform.system() == "Windows":
